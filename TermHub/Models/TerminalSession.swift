@@ -8,6 +8,7 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
     @Published var title: String
     @Published var isAlive: Bool = true
     @Published var showArchiveContext: Bool = false
+    @Published var isIdle: Bool = false
 
     /// When true, auto-title from the shell is ignored
     var userRenamed: Bool = false
@@ -17,6 +18,12 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
 
     /// Tracks whether this session was restored from an archive
     var restoredFrom: ArchivedSession?
+
+    // Idle detection
+    private var lastBufferFingerprint: String = ""
+    private var lastChangeTime: Date = Date()
+    private var idleTimer: Timer?
+    private static let idleThreshold: TimeInterval = 3.0
 
     init(id: UUID = UUID()) {
         self.id = id
@@ -51,6 +58,12 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
             environment: env,
             execName: "-\(shellName)"
         )
+
+        startIdleDetection()
+    }
+
+    deinit {
+        idleTimer?.invalidate()
     }
 
     func rename(_ newName: String) {
@@ -58,6 +71,53 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
         guard !trimmed.isEmpty else { return }
         title = trimmed
         userRenamed = true
+    }
+
+    // MARK: - Idle Detection
+
+    private func startIdleDetection() {
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkIdleState()
+        }
+    }
+
+    private func checkIdleState() {
+        guard isAlive else {
+            if !isIdle { isIdle = true }
+            return
+        }
+
+        let fingerprint = currentBufferFingerprint()
+
+        if fingerprint != lastBufferFingerprint {
+            // Buffer changed — activity detected
+            lastBufferFingerprint = fingerprint
+            lastChangeTime = Date()
+            if isIdle {
+                isIdle = false
+            }
+        } else {
+            // Buffer unchanged — check if enough time has passed
+            let elapsed = Date().timeIntervalSince(lastChangeTime)
+            let shouldBeIdle = elapsed >= Self.idleThreshold
+            if shouldBeIdle != isIdle {
+                isIdle = shouldBeIdle
+            }
+        }
+    }
+
+    /// Snapshot of the last few visible lines — cheap fingerprint
+    private func currentBufferFingerprint() -> String {
+        let terminal = terminalView.getTerminal()
+        let rows = terminal.rows
+        var lines: [String] = []
+        // Check last 3 visible lines for changes
+        for r in max(0, rows - 3)..<rows {
+            if let line = terminal.getLine(row: r) {
+                lines.append(line.translateToString(trimRight: true))
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Buffer Extraction
@@ -77,7 +137,6 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
     }
 
     func archive(workspaceId: UUID) -> ArchivedSession {
-        // Clean directory: strip file:// URL scheme if present
         let cleanDir = cleanDirectoryPath(lastWorkingDirectory)
         return ArchivedSession(
             id: UUID(),
@@ -90,7 +149,6 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
         )
     }
 
-    /// Restore: just cd to the directory, show context via the UI (not terminal feed)
     func restoreFromArchive(_ archive: ArchivedSession) {
         restoredFrom = archive
         showArchiveContext = false

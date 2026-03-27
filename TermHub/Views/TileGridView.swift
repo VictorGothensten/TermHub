@@ -88,7 +88,7 @@ struct TileView: View {
             // Header bar
             HStack(spacing: 6) {
                 Circle()
-                    .fill(session.isAlive ? Color.green.opacity(0.7) : Color.red.opacity(0.7))
+                    .fill(statusDotColor)
                     .frame(width: 8, height: 8)
 
                 if isEditingTitle {
@@ -164,9 +164,25 @@ struct TileView: View {
         .clipShape(RoundedRectangle(cornerRadius: isZoomed ? 0 : 4))
         .overlay(
             RoundedRectangle(cornerRadius: isZoomed ? 0 : 4)
-                .stroke(Color.white.opacity(isZoomed ? 0 : (isHovering ? 0.2 : 0.05)), lineWidth: 1)
+                .stroke(tileBorderColor, lineWidth: session.isIdle && !isZoomed ? 1.5 : 1)
         )
+        .animation(.easeInOut(duration: 0.4), value: session.isIdle)
         .onHover { isHovering = $0 }
+    }
+
+    private var statusDotColor: Color {
+        if !session.isAlive { return Color.red.opacity(0.7) }
+        if session.isIdle { return Color(red: 0.85, green: 0.65, blue: 0.2).opacity(0.9) } // golden
+        return Color.green.opacity(0.7)
+    }
+
+    private var tileBorderColor: Color {
+        if isZoomed { return .clear }
+        if session.isIdle && session.isAlive {
+            return Color(red: 0.85, green: 0.65, blue: 0.2).opacity(0.6) // golden
+        }
+        if isHovering { return Color.white.opacity(0.2) }
+        return Color.white.opacity(0.05)
     }
 
     private func restoreBanner(archive: ArchivedSession) -> some View {
