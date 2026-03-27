@@ -1,37 +1,20 @@
 import Foundation
-import UserNotifications
+import AppKit
 
 class NotificationManager {
     static let shared = NotificationManager()
-    private var authorized = false
 
     func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
-            self?.authorized = granted
-        }
+        // No permission needed — we use dock bounce + in-app indicators
     }
 
     func sendCompletionNotification(sessionTitle: String, lastLine: String, sessionId: UUID, workspaceId: UUID) {
-        guard authorized else {
-            requestPermission()
-            return
+        DispatchQueue.main.async {
+            // Bounce the dock icon to get attention
+            NSApp.requestUserAttention(.informationalRequest)
+
+            // Play a subtle sound
+            NSSound(named: .init("Tink"))?.play()
         }
-
-        let content = UNMutableNotificationContent()
-        content.title = "Terminal ready"
-        content.subtitle = sessionTitle
-        content.body = lastLine.isEmpty ? "Command completed" : lastLine
-        content.sound = .default
-        content.userInfo = [
-            "sessionId": sessionId.uuidString,
-            "workspaceId": workspaceId.uuidString,
-        ]
-
-        let request = UNNotificationRequest(
-            identifier: "idle-\(sessionId.uuidString)-\(Date().timeIntervalSince1970)",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request)
     }
 }
