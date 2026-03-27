@@ -141,113 +141,83 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
     // MARK: - Browser Preview
 
     func openPreviewInBrowser() {
-        let bufferText = extractBufferText()
-        let escapedTitle = title
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-        let escapedContent = bufferText
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
+        // Try to find a URL from the terminal output first
+        if let url = detectServerURL() {
+            openInChrome(url)
+            return
+        }
 
-        let cwd = lastWorkingDirectory ?? "~"
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        // Fallback: check listening ports via lsof
+        if let url = detectListeningPort() {
+            openInChrome(url)
+            return
+        }
 
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>\(escapedTitle) — TermHub Preview</title>
-            <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body {
-                    background: #1a1a1e;
-                    color: #e0e0e0;
-                    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-                    font-size: 13px;
-                    line-height: 1.5;
-                    padding: 0;
-                }
-                .header {
-                    background: #25252a;
-                    border-bottom: 1px solid #333;
-                    padding: 12px 20px;
-                    display: flex;
-                    align-items: center;
-                    gap: 16px;
-                    position: sticky;
-                    top: 0;
-                    z-index: 10;
-                }
-                .header .dot {
-                    width: 10px; height: 10px;
-                    border-radius: 50%;
-                    background: \(isAlive ? (isIdle ? "#d9a633" : "#4caf50") : "#f44336");
-                }
-                .header .title {
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #fff;
-                }
-                .header .meta {
-                    font-size: 11px;
-                    color: #888;
-                    margin-left: auto;
-                }
-                .header .cwd {
-                    font-size: 11px;
-                    color: #4fc3f7;
-                }
-                .content {
-                    padding: 16px 20px;
-                    white-space: pre-wrap;
-                    word-wrap: break-word;
-                    tab-size: 8;
-                }
-                .footer {
-                    background: #25252a;
-                    border-top: 1px solid #333;
-                    padding: 8px 20px;
-                    font-size: 10px;
-                    color: #555;
-                    text-align: center;
-                    position: sticky;
-                    bottom: 0;
-                }
-                ::selection { background: #4fc3f7; color: #000; }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="dot"></div>
-                <span class="title">\(escapedTitle)</span>
-                <span class="cwd">\(cwd)</span>
-                <span class="meta">\(timestamp)</span>
-            </div>
-            <div class="content">\(escapedContent)</div>
-            <div class="footer">TermHub Preview — \(bufferText.components(separatedBy: "\n").count) lines</div>
-            <script>window.scrollTo(0, document.body.scrollHeight);</script>
-        </body>
-        </html>
-        """
+        // Nothing found — beep
+        NSSound.beep()
+    }
 
-        // Write to temp file and open in Chrome
-        let tmpDir = FileManager.default.temporaryDirectory
-        let fileName = "termhub-preview-\(id.uuidString.prefix(8)).html"
-        let fileURL = tmpDir.appendingPathComponent(fileName)
-        try? html.write(to: fileURL, atomically: true, encoding: .utf8)
+    /// Scan terminal buffer for URLs like localhost:3000, http://127.0.0.1:8080, etc.
+    private func detectServerURL() -> URL? {
+        let buffer = extractBufferText()
 
-        // Try Chrome first, fall back to default browser
+        // Match common dev server URL patterns (search from bottom — most recent output first)
+        let patterns = [
+            // Explicit URLs: http://localhost:3000, http://127.0.0.1:8080, http://0.0.0.0:5173
+            "https?://(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0):\\d{2,5}[/\\w.-]*",
+            // "Local:" lines from Vite, Next.js, etc.: "Local:   http://localhost:5173/"
+            "https?://localhost:\\d{2,5}[/\\w.-]*",
+        ]
+
+        let lines = buffer.components(separatedBy: "\n").reversed()
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            for line in lines {
+                let range = NSRange(line.startIndex..., in: line)
+                if let match = regex.firstMatch(in: line, range: range),
+                   let matchRange = Range(match.range, in: line) {
+                    var urlString = String(line[matchRange])
+                    // Replace 0.0.0.0 with localhost (0.0.0.0 doesn't open in browser)
+                    urlString = urlString.replacingOccurrences(of: "0.0.0.0", with: "localhost")
+                    if let url = URL(string: urlString) {
+                        return url
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Use lsof to find ports the shell's child processes are listening on
+    private func detectListeningPort() -> URL? {
+        // Get the shell's PID from the process
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        // Find TCP LISTEN ports for processes in our terminal's process group
+        process.arguments = ["-c", "lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep -v '^COMMAND' | awk '{print $9}' | grep -oE ':\\d+$' | tr -d ':' | sort -n | head -1"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let port = Int(output), port > 0 else { return nil }
+
+        return URL(string: "http://localhost:\(port)")
+    }
+
+    private func openInChrome(_ url: URL) {
         let chromeURL = URL(fileURLWithPath: "/Applications/Google Chrome.app")
         if FileManager.default.fileExists(atPath: chromeURL.path) {
             NSWorkspace.shared.open(
-                [fileURL],
+                [url],
                 withApplicationAt: chromeURL,
                 configuration: NSWorkspace.OpenConfiguration()
             )
         } else {
-            NSWorkspace.shared.open(fileURL)
+            NSWorkspace.shared.open(url)
         }
     }
 
