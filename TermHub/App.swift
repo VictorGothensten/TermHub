@@ -8,6 +8,7 @@ struct TermHubApp: App {
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.applicationIconImage = AppIcon.generate(size: 512)
     }
 
     var body: some Scene {
