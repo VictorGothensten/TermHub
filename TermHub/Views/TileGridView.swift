@@ -153,6 +153,14 @@ struct TileView: View {
                     .buttonStyle(.plain)
                     .help(session.notifyOnIdle ? "Disable notifications" : "Notify when idle")
 
+                    Button(action: { session.openPreviewInBrowser() }) {
+                        Image(systemName: "eye")
+                            .font(.system(size: 10))
+                            .foregroundColor(.blue.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Preview in browser")
+
                     Button(action: onArchive) {
                         Image(systemName: "archivebox")
                             .font(.system(size: 10))

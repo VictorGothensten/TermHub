@@ -138,6 +138,119 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
         return lines.joined(separator: "\n")
     }
 
+    // MARK: - Browser Preview
+
+    func openPreviewInBrowser() {
+        let bufferText = extractBufferText()
+        let escapedTitle = title
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+        let escapedContent = bufferText
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+
+        let cwd = lastWorkingDirectory ?? "~"
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>\(escapedTitle) — TermHub Preview</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body {
+                    background: #1a1a1e;
+                    color: #e0e0e0;
+                    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+                    font-size: 13px;
+                    line-height: 1.5;
+                    padding: 0;
+                }
+                .header {
+                    background: #25252a;
+                    border-bottom: 1px solid #333;
+                    padding: 12px 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    position: sticky;
+                    top: 0;
+                    z-index: 10;
+                }
+                .header .dot {
+                    width: 10px; height: 10px;
+                    border-radius: 50%;
+                    background: \(isAlive ? (isIdle ? "#d9a633" : "#4caf50") : "#f44336");
+                }
+                .header .title {
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #fff;
+                }
+                .header .meta {
+                    font-size: 11px;
+                    color: #888;
+                    margin-left: auto;
+                }
+                .header .cwd {
+                    font-size: 11px;
+                    color: #4fc3f7;
+                }
+                .content {
+                    padding: 16px 20px;
+                    white-space: pre-wrap;
+                    word-wrap: break-word;
+                    tab-size: 8;
+                }
+                .footer {
+                    background: #25252a;
+                    border-top: 1px solid #333;
+                    padding: 8px 20px;
+                    font-size: 10px;
+                    color: #555;
+                    text-align: center;
+                    position: sticky;
+                    bottom: 0;
+                }
+                ::selection { background: #4fc3f7; color: #000; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="dot"></div>
+                <span class="title">\(escapedTitle)</span>
+                <span class="cwd">\(cwd)</span>
+                <span class="meta">\(timestamp)</span>
+            </div>
+            <div class="content">\(escapedContent)</div>
+            <div class="footer">TermHub Preview — \(bufferText.components(separatedBy: "\n").count) lines</div>
+            <script>window.scrollTo(0, document.body.scrollHeight);</script>
+        </body>
+        </html>
+        """
+
+        // Write to temp file and open in Chrome
+        let tmpDir = FileManager.default.temporaryDirectory
+        let fileName = "termhub-preview-\(id.uuidString.prefix(8)).html"
+        let fileURL = tmpDir.appendingPathComponent(fileName)
+        try? html.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        // Try Chrome first, fall back to default browser
+        let chromeURL = URL(fileURLWithPath: "/Applications/Google Chrome.app")
+        if FileManager.default.fileExists(atPath: chromeURL.path) {
+            NSWorkspace.shared.open(
+                [fileURL],
+                withApplicationAt: chromeURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+        } else {
+            NSWorkspace.shared.open(fileURL)
+        }
+    }
+
     // MARK: - Buffer Extraction
 
     func extractBufferText() -> String {
