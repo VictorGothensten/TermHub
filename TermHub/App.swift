@@ -5,6 +5,8 @@ import AppKit
 struct TermHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
+    @StateObject private var updater = AppUpdater()
+    @State private var showUpdateSheet = false
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -18,6 +20,9 @@ struct TermHubApp: App {
                 .frame(minWidth: 800, minHeight: 600)
                 .onAppear {
                     appDelegate.appState = appState
+                }
+                .sheet(isPresented: $showUpdateSheet) {
+                    UpdateView(updater: updater)
                 }
         }
         .defaultSize(width: 1200, height: 800)
@@ -35,6 +40,14 @@ struct TermHubApp: App {
                     appState.showNewWorkspacePrompt = true
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    updater.state = .idle
+                    showUpdateSheet = true
+                }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
             }
         }
     }
