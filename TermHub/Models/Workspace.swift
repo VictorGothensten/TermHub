@@ -5,6 +5,7 @@ class Workspace: Identifiable, ObservableObject {
     @Published var name: String
     @Published var sessions: [TerminalSession]
     @Published var archives: [ArchivedSession]
+    @Published var activityLog: [ActivityEvent] = []
 
     init(id: UUID = UUID(), name: String, sessions: [TerminalSession] = [], archives: [ArchivedSession] = []) {
         self.id = id
@@ -14,11 +15,28 @@ class Workspace: Identifiable, ObservableObject {
     }
 
     func addSession() {
-        sessions.append(TerminalSession())
+        let session = TerminalSession()
+        session.workspaceId = id
+        sessions.append(session)
+        logEvent(.created, session: session)
+    }
+
+    func logEvent(_ type: ActivityEvent.EventType, session: TerminalSession) {
+        let event = ActivityEvent(timestamp: Date(), sessionId: session.id, sessionTitle: session.title, eventType: type)
+        activityLog.append(event)
+        if activityLog.count > 100 { activityLog.removeFirst() }
     }
 
     func removeSession(_ session: TerminalSession) {
         sessions.removeAll { $0.id == session.id }
+    }
+
+    func moveSession(fromId: UUID, toId: UUID) {
+        guard let fromIdx = sessions.firstIndex(where: { $0.id == fromId }),
+              let toIdx = sessions.firstIndex(where: { $0.id == toId }),
+              fromIdx != toIdx else { return }
+        let session = sessions.remove(at: fromIdx)
+        sessions.insert(session, at: toIdx)
     }
 
     func archiveSession(_ session: TerminalSession) {

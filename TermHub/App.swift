@@ -42,6 +42,28 @@ struct TermHubApp: App {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             }
 
+            CommandGroup(after: .toolbar) {
+                Button("Quick Switcher") {
+                    appState.showQuickSwitcher.toggle()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+
+                Button("Search All Terminals") {
+                    appState.showSearch.toggle()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Snippet Palette") {
+                    appState.showSnippets.toggle()
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Button("Templates") {
+                    appState.showTemplates.toggle()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates...") {
                     updater.state = .idle
@@ -55,6 +77,35 @@ struct TermHubApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var appState: AppState?
+    private var keyMonitor: Any?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Monitor key events for broadcast mode
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self,
+                  let appState = self.appState,
+                  appState.broadcastMode,
+                  let workspace = appState.selectedWorkspace,
+                  !event.modifierFlags.contains(.command) // Don't broadcast Cmd shortcuts
+            else { return event }
+
+            // Find the focused terminal (first responder)
+            let focusedView = event.window?.firstResponder
+            let focusedSession = workspace.sessions.first { session in
+                session.terminalView === focusedView || session.terminalView.isDescendant(of: focusedView as? NSView ?? NSView())
+            }
+
+            // Send to all OTHER sessions
+            if let chars = event.characters {
+                let bytes = Array(chars.utf8)
+                for session in workspace.sessions where session.id != focusedSession?.id {
+                    session.terminalView.getTerminal().sendResponse(bytes)
+                }
+            }
+
+            return event // let the original event through to the focused terminal
+        }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let appState = appState else { return .terminateNow }

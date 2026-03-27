@@ -9,9 +9,13 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
     @Published var isAlive: Bool = true
     @Published var showArchiveContext: Bool = false
     @Published var isIdle: Bool = false
+    @Published var notifyOnIdle: Bool = false
 
     /// When true, auto-title from the shell is ignored
     var userRenamed: Bool = false
+
+    /// Which workspace this session belongs to (for notifications)
+    var workspaceId: UUID?
 
     /// Last known working directory (updated via OSC 7)
     var lastWorkingDirectory: String?
@@ -100,8 +104,22 @@ class TerminalSession: NSObject, Identifiable, ObservableObject, LocalProcessTer
             // Buffer unchanged — check if enough time has passed
             let elapsed = Date().timeIntervalSince(lastChangeTime)
             let shouldBeIdle = elapsed >= Self.idleThreshold
-            if shouldBeIdle != isIdle {
-                isIdle = shouldBeIdle
+            if shouldBeIdle && !isIdle {
+                isIdle = true
+                // Send notification if enabled
+                if notifyOnIdle, let wsId = workspaceId {
+                    let lastLine = currentBufferFingerprint()
+                        .components(separatedBy: "\n")
+                        .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? ""
+                    NotificationManager.shared.sendCompletionNotification(
+                        sessionTitle: title,
+                        lastLine: String(lastLine.prefix(100)),
+                        sessionId: id,
+                        workspaceId: wsId
+                    )
+                }
+            } else if !shouldBeIdle && isIdle {
+                isIdle = false
             }
         }
     }

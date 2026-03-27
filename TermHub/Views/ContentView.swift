@@ -33,6 +33,39 @@ struct ContentView: View {
             }
         }
         .background(Color(nsColor: NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)))
+        .overlay {
+            if appState.showQuickSwitcher {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { appState.showQuickSwitcher = false }
+                    QuickSwitcherView()
+                        .environmentObject(appState)
+                        .padding(.bottom, 200)
+                }
+            }
+            if appState.showSnippets {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { appState.showSnippets = false }
+                    SnippetPaletteView(store: appState.snippetStore)
+                        .environmentObject(appState)
+                        .padding(.bottom, 200)
+                }
+            }
+            if appState.showTemplates, appState.selectedWorkspace != nil {
+                HStack {
+                    Spacer()
+                    TemplateView(
+                        store: appState.templateStore,
+                        onLaunch: { appState.launchTemplate($0) },
+                        onDismiss: { appState.showTemplates = false }
+                    )
+                    .environmentObject(appState)
+                }
+            }
+        }
         .sheet(isPresented: $appState.showNewWorkspacePrompt) {
             newWorkspaceSheet
         }
@@ -75,7 +108,32 @@ struct ContentView: View {
 
     private func workspaceView(workspace: Workspace) -> some View {
         VStack(spacing: 0) {
-            // Zoom header (shown only when zoomed)
+            // Search bar
+            if appState.showSearch {
+                SearchBarView()
+                    .environmentObject(appState)
+                Divider()
+            }
+
+            // Broadcast indicator
+            if appState.broadcastMode {
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 10))
+                    Text("BROADCAST MODE — input sent to all terminals")
+                        .font(.system(size: 10, weight: .medium))
+                    Spacer()
+                    Button("Stop") { appState.broadcastMode = false }
+                        .font(.system(size: 10))
+                        .buttonStyle(.plain)
+                }
+                .foregroundColor(.red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.red.opacity(0.1))
+            }
+
+            // Zoom header
             if appState.zoomedSession != nil {
                 HStack {
                     Button(action: { appState.zoomedSession = nil }) {
@@ -88,7 +146,6 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.escape, modifiers: [])
-
                     Spacer()
                 }
                 .padding(.horizontal, 12)
@@ -97,30 +154,52 @@ struct ContentView: View {
                 Divider()
             }
 
-            TileGridView(
-                sessions: workspace.sessions,
-                zoomedSession: appState.zoomedSession,
-                onZoom: { session in
-                    appState.zoomedSession = session
-                },
-                onUnzoom: {
-                    appState.zoomedSession = nil
-                },
-                onClose: { session in
-                    if appState.zoomedSession?.id == session.id {
+            // Main content: grid + optional timeline sidebar
+            HStack(spacing: 0) {
+                TileGridView(
+                    sessions: workspace.sessions,
+                    zoomedSession: appState.zoomedSession,
+                    onZoom: { session in
+                        appState.zoomedSession = session
+                    },
+                    onUnzoom: {
                         appState.zoomedSession = nil
+                    },
+                    onClose: { session in
+                        if appState.zoomedSession?.id == session.id {
+                            appState.zoomedSession = nil
+                        }
+                        workspace.logEvent(.exited(code: nil), session: session)
+                        workspace.removeSession(session)
+                        appState.objectWillChange.send()
+                    },
+                    onArchive: { session in
+                        workspace.logEvent(.archived, session: session)
+                        appState.archiveSession(session, in: workspace)
+                    },
+                    onReorder: { fromId, toId in
+                        workspace.moveSession(fromId: fromId, toId: toId)
+                        appState.objectWillChange.send()
                     }
-                    workspace.removeSession(session)
-                    appState.objectWillChange.send()
-                },
-                onArchive: { session in
-                    appState.archiveSession(session, in: workspace)
-                }
-            )
+                )
 
-            // Bottom bar (hidden when zoomed)
+                if appState.showTimeline {
+                    Divider()
+                    ActivityTimelineView(
+                        events: workspace.activityLog,
+                        onDismiss: { appState.showTimeline = false },
+                        onJump: { sessionId in
+                            if let session = workspace.sessions.first(where: { $0.id == sessionId }) {
+                                appState.zoomedSession = session
+                            }
+                        }
+                    )
+                }
+            }
+
+            // Bottom bar
             if appState.zoomedSession == nil {
-                HStack {
+                HStack(spacing: 10) {
                     Button(action: {
                         workspace.addSession()
                         appState.objectWillChange.send()
@@ -133,7 +212,25 @@ struct ContentView: View {
 
                     Spacer()
 
-                    // Archives button
+                    // Broadcast toggle
+                    Button(action: { appState.broadcastMode.toggle() }) {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(appState.broadcastMode ? .red : .gray.opacity(0.4))
+                    .help("Broadcast mode")
+
+                    // Timeline toggle
+                    Button(action: { appState.showTimeline.toggle() }) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(appState.showTimeline ? .white : .gray.opacity(0.4))
+                    .help("Activity timeline")
+
+                    // Archives
                     Button(action: { appState.showArchives = true }) {
                         HStack(spacing: 4) {
                             Image(systemName: "archivebox")

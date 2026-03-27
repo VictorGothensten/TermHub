@@ -7,6 +7,7 @@ struct TileGridView: View {
     let onUnzoom: () -> Void
     let onClose: (TerminalSession) -> Void
     let onArchive: (TerminalSession) -> Void
+    var onReorder: ((UUID, UUID) -> Void)? = nil
 
     private let gap: CGFloat = 2
 
@@ -39,6 +40,19 @@ struct TileGridView: View {
                         .zIndex(isZoomed ? 1 : 0)
                         .opacity(isZoomed || !isAnyZoomed ? 1 : 0)
                         .allowsHitTesting(isZoomed || !isAnyZoomed)
+                        .draggable(session.id.uuidString) {
+                            Text(session.title)
+                                .font(.system(size: 11))
+                                .padding(6)
+                                .background(Color(nsColor: NSColor(red: 0.2, green: 0.2, blue: 0.22, alpha: 0.9)))
+                                .cornerRadius(4)
+                        }
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let draggedId = items.first,
+                                  let fromId = UUID(uuidString: draggedId) else { return false }
+                            onReorder?(fromId, session.id)
+                            return true
+                        }
                     }
                 }
             }
@@ -67,6 +81,7 @@ struct TileGridView: View {
 }
 
 struct TileView: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var session: TerminalSession
     let index: Int
     let isZoomed: Bool
@@ -130,6 +145,14 @@ struct TileView: View {
                 }
 
                 if isHovering {
+                    Button(action: { session.notifyOnIdle.toggle(); if session.notifyOnIdle { NotificationManager.shared.requestPermission() } }) {
+                        Image(systemName: session.notifyOnIdle ? "bell.fill" : "bell")
+                            .font(.system(size: 10))
+                            .foregroundColor(session.notifyOnIdle ? .yellow : .gray)
+                    }
+                    .buttonStyle(.plain)
+                    .help(session.notifyOnIdle ? "Disable notifications" : "Notify when idle")
+
                     Button(action: onArchive) {
                         Image(systemName: "archivebox")
                             .font(.system(size: 10))
@@ -178,6 +201,7 @@ struct TileView: View {
 
     private var tileBorderColor: Color {
         if isZoomed { return .clear }
+        if appState.broadcastMode { return Color.red.opacity(0.5) }
         if session.isIdle && session.isAlive {
             return Color(red: 0.85, green: 0.65, blue: 0.2).opacity(0.6) // golden
         }

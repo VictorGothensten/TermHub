@@ -7,6 +7,15 @@ class AppState: ObservableObject {
     @Published var zoomedSession: TerminalSession? = nil
     @Published var showNewWorkspacePrompt: Bool = false
     @Published var showArchives: Bool = false
+    @Published var showQuickSwitcher: Bool = false
+    @Published var showSearch: Bool = false
+    @Published var showTimeline: Bool = false
+    @Published var broadcastMode: Bool = false
+    @Published var showSnippets: Bool = false
+    @Published var showTemplates: Bool = false
+
+    let snippetStore = SnippetStore()
+    let templateStore = TemplateStore()
 
     var selectedWorkspace: Workspace? {
         guard workspaces.indices.contains(selectedWorkspaceIndex) else { return nil }
@@ -60,6 +69,39 @@ class AppState: ObservableObject {
         selectedWorkspaceIndex = index
         zoomedSession = nil
         showArchives = false
+    }
+
+    // MARK: - Templates
+
+    func launchTemplate(_ template: SessionTemplate) {
+        let ws = Workspace(name: template.name)
+        for ts in template.sessions {
+            let session = TerminalSession()
+            session.workspaceId = ws.id
+            if !ts.title.isEmpty {
+                session.title = ts.title
+                session.userRenamed = true
+            }
+            ws.sessions.append(session)
+
+            // cd to working directory if specified
+            if let dir = ts.workingDirectory {
+                let escaped = dir.replacingOccurrences(of: "'", with: "'\\''")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    session.terminalView.getTerminal().sendResponse(Array("cd '\(escaped)'\n".utf8))
+                }
+            }
+            // Run startup command if specified
+            if let cmd = ts.command, !cmd.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    session.terminalView.getTerminal().sendResponse(Array("\(cmd)\n".utf8))
+                }
+            }
+        }
+        if ws.sessions.isEmpty { ws.addSession() }
+        workspaces.append(ws)
+        selectedWorkspaceIndex = workspaces.count - 1
+        showTemplates = false
     }
 
     // MARK: - Archive Actions
